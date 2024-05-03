@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+'''
+################################################################################
+#                                                                              #
+# SoundSorcerer                                                                #
+#                                                                              #
+################################################################################
+#                                                                              #
+# LICENCE INFORMATION                                                          #
+#                                                                              #
+# This program continuously sets the audio output device according to a        #
+# prioritised list of audio output devices.                                    #
+#                                                                              #
+# copyright (C) 2024 William Breaden Madden                                    #
+#                                                                              #
+# This software is released under the terms of the GNU General Public License  #
+# version 3 (GPLv3).                                                           #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify it      #
+# under the terms of the GNU General Public License as published by the Free   #
+# Software Foundation, either version 3 of the License, or (at your option)    #
+# any later version.                                                           #
+#                                                                              #
+# This program is distributed in the hope that it will be useful, but WITHOUT  #
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or        #
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for     #
+# more details.                                                                #
+#                                                                              #
+# For a copy of the GNU General Public License, see                            #
+# <http://www.gnu.org/licenses>.                                               #
+#                                                                              #
+################################################################################
+'''
+
+import subprocess
+import time
+
+from config import priority_list # priority list of output devices (names from `pacmd list-sinks`)
+
+__version__ = '2024-05-03T1656Z'
+
+def main():
+    print(f'current output device:\n{current_output_device()}\n')
+    print(f"available devices:\n{chr(10).join(current_available_devices())}\n")
+    print(f'device priority list:\n{chr(10).join(priority_list)}\n')
+    print('start monitoring...\n')
+
+    while True:
+        available_devices = current_available_devices()
+        current_device = current_output_device()
+
+        # Identify the highest priority device available.
+        highest_priority_device_available = None
+        for device in priority_list:
+            if device in available_devices:
+                highest_priority_device_available = device
+                break
+
+        # Is a prioritised device available and not set as the current device?
+        if highest_priority_device_available and current_device != highest_priority_device_available:
+            # If yes, set the highest priority device as the current device.
+            print(f'change from\n{current_device}\nto\n{highest_priority_device_available}')
+            set_default_output_device(highest_priority_device_available)
+        elif not highest_priority_device_available:
+            print('no prioritised devices are available')
+        else:
+            pass
+
+        time.sleep(3)
+
+def current_output_device():
+    result = subprocess.run(['pacmd', 'list-sinks'], stdout=subprocess.PIPE, text=True)
+    output = result.stdout
+    lines = output.split('\n')
+    sink_name = None
+    for line in lines:
+        if '*' in line:
+            for sub_line in lines[lines.index(line):]:
+                if 'name:' in sub_line:
+                    sink_name = sub_line.split('<')[1].split('>')[0]
+                    break
+    return sink_name
+
+def current_available_devices():
+    result = subprocess.run(['pacmd', 'list-sinks'], stdout=subprocess.PIPE, text=True)
+    output = result.stdout
+    lines = output.split('\n')
+    _available_devices = []
+    for line in lines:
+        if 'name:' in line:
+            device_name = line.split('<')[1].split('>')[0]
+            _available_devices.append(device_name)
+    return _available_devices
+
+def set_default_output_device(device_name):
+    try:
+        subprocess.run(['pacmd', 'set-default-sink', device_name], stdout=subprocess.PIPE)
+    except Exception as e:
+        print(f'error changing to output device: {e}')
+
+if __name__ == '__main__':
+    main()
