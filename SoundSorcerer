@@ -37,19 +37,26 @@
 import subprocess
 import time
 
-from config import priority_list # priority list of output devices (names from `pacmd list-sinks`)
+from config import priority_list  # priority list of output devices (sink names)
 
-__version__ = '2024-05-03T1656Z'
+__version__ = "2025-12-10T2019Z"
+
+PACTL = "pactl"
 
 def main():
-    print(f'current output device:\n{current_output_device()}\n')
+    print(f"current output device:\n{current_output_device()}\n")
     print(f"available devices:\n{chr(10).join(current_available_devices())}\n")
-    print(f'device priority list:\n{chr(10).join(priority_list)}\n')
-    print('start monitoring...\n')
+    print(f"device priority list:\n{chr(10).join(priority_list)}\n")
+    print("start monitoring...\n")
 
     while True:
         available_devices = current_available_devices()
         current_device = current_output_device()
+
+        if current_device is None:
+            print("no current default sink found (check audio daemon)")
+            time.sleep(3)
+            continue
 
         # Identify the highest priority device available.
         highest_priority_device_available = None
@@ -60,45 +67,90 @@ def main():
 
         # Is a prioritised device available and not set as the current device?
         if highest_priority_device_available and current_device != highest_priority_device_available:
-            # If yes, set the highest priority device as the current device.
-            print(f'change from\n{current_device}\nto\n{highest_priority_device_available}')
+            print(f"change from\n{current_device}\nto\n{highest_priority_device_available}")
             set_default_output_device(highest_priority_device_available)
         elif not highest_priority_device_available:
-            print('no prioritised devices are available')
+            print("no prioritised devices are available")
         else:
+            # Already on the highest priority sink.
             pass
 
         time.sleep(3)
 
+
 def current_output_device():
-    result = subprocess.run(['pacmd', 'list-sinks'], stdout=subprocess.PIPE, text=True)
-    output = result.stdout
-    lines = output.split('\n')
-    sink_name = None
-    for line in lines:
-        if '*' in line:
-            for sub_line in lines[lines.index(line):]:
-                if 'name:' in sub_line:
-                    sink_name = sub_line.split('<')[1].split('>')[0]
-                    break
-    return sink_name
+    """
+    Return the name of the current default sink, or None if it cannot be determined.
+    """
+    try:
+        # Works with PulseAudio and with PipeWire's pipewire-pulse shim.
+        result = subprocess.run(
+            [PACTL, "get-default-sink"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        print(f"error: {PACTL} not found on PATH")
+        return None
+    except subprocess.CalledProcessError as e:
+        msg = (e.stderr or e.stdout or "").strip()
+        print(f"error: {PACTL} get-default-sink failed: {msg}")
+        return None
+
+    sink_name = result.stdout.strip()
+    return sink_name or None
+
 
 def current_available_devices():
-    result = subprocess.run(['pacmd', 'list-sinks'], stdout=subprocess.PIPE, text=True)
-    output = result.stdout
-    lines = output.split('\n')
-    _available_devices = []
-    for line in lines:
-        if 'name:' in line:
-            device_name = line.split('<')[1].split('>')[0]
-            _available_devices.append(device_name)
-    return _available_devices
+    """
+    Return a list of sink names currently available.
+    """
+    try:
+        result = subprocess.run(
+            [PACTL, "list", "sinks", "short"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        print(f"error: {PACTL} not found on PATH")
+        return []
+    except subprocess.CalledProcessError as e:
+        msg = (e.stderr or e.stdout or "").strip()
+        print(f"error: {PACTL} list sinks failed: {msg}")
+        return []
+
+    devices = []
+    for line in result.stdout.splitlines():
+        # Format is: index<TAB>name<TAB>driver<TAB>format<TAB>state
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            devices.append(parts[1])
+    return devices
+
 
 def set_default_output_device(device_name):
+    """
+    Set the default sink to the given sink name.
+    """
     try:
-        subprocess.run(['pacmd', 'set-default-sink', device_name], stdout=subprocess.PIPE)
-    except Exception as e:
-        print(f'error changing to output device: {e}')
+        subprocess.run(
+            [PACTL, "set-default-sink", device_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        print(f"error: {PACTL} not found on PATH")
+    except subprocess.CalledProcessError as e:
+        msg = (e.stderr or e.stdout or "").strip()
+        print(f"error changing to output device {device_name}: {msg}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
+
