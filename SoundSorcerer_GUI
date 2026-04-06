@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+################################################################################
+#                                                                              #
+# SoundSorcerer GUI                                                            #
+#                                                                              #
+################################################################################
+#                                                                              #
+# LICENCE INFORMATION                                                          #
+#                                                                              #
+# This program presents a GUI for selecting a sound output device.             #
+#                                                                              #
+# copyright (C) 2026 William Breaden Madden                                    #
+#                                                                              #
+# This software is released under the terms of the GNU General Public License  #
+# version 3 (GPLv3).                                                           #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify it      #
+# under the terms of the GNU General Public License as published by the Free   #
+# Software Foundation, either version 3 of the License, or (at your option)    #
+# any later version.                                                           #
+#                                                                              #
+# This program is distributed in the hope that it will be useful, but WITHOUT  #
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or        #
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for     #
+# more details.                                                                #
+#                                                                              #
+# For a copy of the GNU General Public License, see                            #
+# <http://www.gnu.org/licenses>.                                               #
+#                                                                              #
+################################################################################
+"""
+
+from __future__ import annotations
+
+import subprocess
+import tkinter as tk
+from tkinter import messagebox
+
+__version__ = "2026-04-06T1607Z"
+
+BUTTON_BG              = "#a5a5a5"
+BUTTON_ACTIVE_BG       = "#8e8e8e"
+BUTTON_WRAP_LENGTH     = 640
+PACTL                  = "pactl"
+TYPED_INDEX_TIMEOUT_MS = 600
+
+
+def _run_pactl(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            [PACTL, *arguments],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(f"{PACTL} not found on PATH") from error
+    except subprocess.CalledProcessError as error:
+        message = (error.stderr or error.stdout or "").strip()
+        joined_arguments = " ".join(arguments)
+        raise RuntimeError(f"{PACTL} {joined_arguments} failed: {message}") from error
+
+
+def current_output_device() -> str | None:
+    """
+    Return the name of the current default sink, or None if it cannot be
+    determined.
+    """
+    result = _run_pactl(["get-default-sink"])
+    sink_name = result.stdout.strip()
+    return sink_name or None
+
+
+def current_available_devices() -> list[str]:
+    """
+    Return available sink names in alphabetical order.
+    """
+    result = _run_pactl(["list", "sinks", "short"])
+
+    devices = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            devices.append(parts[1])
+
+    return sorted(devices, key=str.casefold)
+
+
+def set_default_output_device(device_name: str) -> None:
+    """
+    Set the default sink to the given sink name.
+    """
+    _run_pactl(["set-default-sink", device_name])
+
+
+class SoundSorcererGui(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("SoundSorcerer GUI")
+        self.resizable(False, False)
+        self.configure(padx=12, pady=12)
+        self.available_devices: list[str] = []
+        self.current_device: str | None = None
+        self.typed_index = ""
+        self.typed_index_after_id: str | None = None
+
+        self.bind("<Escape>", self._close)
+        self.bind("<KeyPress>", self._handle_keypress)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+        try:
+            self.available_devices = current_available_devices()
+            self.current_device = current_output_device()
+        except RuntimeError as error:
+            self.after_idle(lambda: self._show_startup_error(str(error)))
+            return
+
+        self._build_widgets()
+        self._centre_window()
+        self.after_idle(self.focus_force)
+
+    def _build_widgets(self):
+        tk.Label(
+            self,
+            text="Type the matching button number or click a device.",
+            justify="left",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        button_frame = tk.Frame(self)
+        button_frame.pack(fill="both", expand=True)
+
+        if not self.available_devices:
+            tk.Label(
+                button_frame,
+                text="No output devices are currently available.",
+                justify="left",
+                anchor="w",
+            ).pack(fill="x")
+            tk.Button(
+                self,
+                text="Close",
+                command=self._close,
+                bg=BUTTON_BG,
+                activebackground=BUTTON_ACTIVE_BG,
+            ).pack(anchor="e", pady=(12, 0))
+            return
+
+        for index, device_name in enumerate(self.available_devices, start=1):
+            button_text = f"{index}. {device_name}"
+            if device_name == self.current_device:
+                button_text = f"{button_text}\nCurrent default output device"
+
+            tk.Button(
+                button_frame,
+                text=button_text,
+                justify="left",
+                anchor="w",
+                bg=BUTTON_BG,
+                activebackground=BUTTON_ACTIVE_BG,
+                width=72,
+                wraplength=BUTTON_WRAP_LENGTH,
+                padx=12,
+                pady=8,
+                relief=("sunken" if device_name == self.current_device else "raised"),
+                command=lambda target_device=device_name: self._select_device(target_device),
+            ).pack(fill="x", pady=4)
+
+    def _show_startup_error(self, message: str):
+        messagebox.showerror("SoundSorcerer GUI", message, parent=self)
+        self.destroy()
+
+    def _handle_keypress(self, event):
+        if not event.char or not event.char.isdigit():
+            return None
+
+        if event.char == "0" and not self.typed_index:
+            if len(self.available_devices) >= 10:
+                return self._select_device(self.available_devices[9])
+            return "break"
+
+        self.typed_index = f"{self.typed_index}{event.char}"
+        matching_indices = [
+            index
+            for index in range(1, len(self.available_devices) + 1)
+            if str(index).startswith(self.typed_index)
+        ]
+
+        if not matching_indices:
+            self._clear_typed_index()
+            return "break"
+
+        if len(matching_indices) == 1 and str(matching_indices[0]) == self.typed_index:
+            return self._commit_typed_index()
+
+        self._schedule_typed_index_resolution()
+        return "break"
+
+    def _schedule_typed_index_resolution(self):
+        if self.typed_index_after_id is not None:
+            self.after_cancel(self.typed_index_after_id)
+        self.typed_index_after_id = self.after(TYPED_INDEX_TIMEOUT_MS, self._commit_typed_index)
+
+    def _clear_typed_index(self):
+        if self.typed_index_after_id is not None:
+            self.after_cancel(self.typed_index_after_id)
+            self.typed_index_after_id = None
+        self.typed_index = ""
+
+    def _commit_typed_index(self):
+        selected_index_text = self.typed_index
+        self._clear_typed_index()
+
+        if not selected_index_text:
+            return "break"
+
+        selected_index = int(selected_index_text)
+        if 1 <= selected_index <= len(self.available_devices):
+            return self._select_device(self.available_devices[selected_index - 1])
+        return "break"
+
+    def _select_device(self, device_name: str):
+        try:
+            if device_name != self.current_device:
+                set_default_output_device(device_name)
+        except RuntimeError as error:
+            messagebox.showerror("SoundSorcerer GUI", str(error), parent=self)
+            return "break"
+
+        self.destroy()
+        return "break"
+
+    def _centre_window(self):
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x_position = (self.winfo_screenwidth() - width) // 2
+        y_position = (self.winfo_screenheight() - height) // 2
+        self.geometry(f"{width}x{height}+{x_position}+{y_position}")
+
+    def _close(self, event=None):
+        self._clear_typed_index()
+        self.destroy()
+        return "break"
+
+
+def main():
+    try:
+        application = SoundSorcererGui()
+    except tk.TclError as error:
+        print(f"error: could not start Tk: {error}")
+        return 1
+
+    application.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
