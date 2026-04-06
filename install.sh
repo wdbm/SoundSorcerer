@@ -14,14 +14,12 @@ mkdir -p ${HOME}/.local/share/applications
 cat > "${HOME}/.local/share/applications/SoundSorcerer_GUI.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=ASoundSorcerer GUI
+Name=SoundSorcerer GUI
 Comment=GUI to select sound output device
 Exec=${HOME}/.local/bin/SoundSorcerer_GUI
 TryExec=${HOME}/.local/bin/SoundSorcerer_GUI
 Icon=SoundSorcerer
 Terminal=false
-Categories=Graphics;Viewer;
-MimeType=image/png;image/jpeg;image/gif;
 StartupNotify=true
 EOF
 
